@@ -26,9 +26,65 @@ function vim.g.nvim_cmdline_omnifunc(findstart)
     end
 end
 
+---@return string
+function M.get_command()
+    local prompt = vim.fn.prompt_getprompt(vim.api.nvim_get_current_buf())
+    return vim.api.nvim_get_current_line():sub(#prompt + 1)
+end
+
+---@param command string
+function M.set_command(command)
+    local prompt = vim.fn.prompt_getprompt(vim.api.nvim_get_current_buf())
+    vim.api.nvim_set_current_line(prompt .. command)
+end
+
+---@type integer
+local history_index = 0
+
+---@type string
+local working_command = ''
+
+---@param index integer
+local function set_history_index(index)
+    local max = vim.fn.histnr('cmd')
+    if history_index == max then
+        working_command = M.get_command()
+    end
+    if index > max then
+        history_index = max
+    elseif index < 0 then
+        history_index = 0
+    else
+        history_index = index
+    end
+    if history_index == max then
+        M.set_command(working_command)
+    else
+        M.set_command(vim.fn.histget('cmd', history_index + 1))
+    end
+end
+
+function M.history_up()
+    set_history_index(history_index - vim.v.count1)
+end
+
+function M.history_down()
+    set_history_index(history_index + vim.v.count1)
+end
+
+function M.history_top()
+    set_history_index(0)
+end
+
+function M.history_bottom()
+    set_history_index(vim.fn.histnr('cmd'))
+end
+
 ---@param options? CmdlineOptions
 function M.open(options)
     if not options then options = M.default_options end
+
+    history_index = vim.fn.histnr('cmd')
 
     local buffer = vim.api.nvim_create_buf(false --[[listed]], true --[[scratch]])
     vim.bo[buffer].filetype  = 'vim'
@@ -36,14 +92,26 @@ function M.open(options)
     vim.bo[buffer].bufhidden = 'delete'
     vim.bo[buffer].omnifunc  = 'v:lua.vim.g.nvim_cmdline_omnifunc'
 
-    vim.keymap.set('n', ':', ':', { buffer = buffer, desc = 'nvim-cmdline: Access native cmdline' })
-    vim.keymap.set('n', '<esc>', '<cmd>bdelete!<cr>', { buffer = buffer, desc = 'nvim-cmdline: Close' })
-    vim.keymap.set('i', '<tab>', 'pumvisible() ? "<c-n>" : "<c-x><c-o>"', { buffer = buffer, expr = true })
-    vim.keymap.set('i', '<s-tab>', 'pumvisible() ? "<c-p>" : "<s-tab>"', { buffer = buffer, expr = true })
+    ---@type fun(description: string, override?: vim.keymap.set.Opts): vim.keymap.set.Opts
+    local function opts(description, override)
+        return vim.tbl_deep_extend('force', { buffer = buffer, desc = 'nvim-cmdline: ' .. description }, override or {})
+    end
+
+    vim.keymap.set('n', 'gg', M.history_top, opts('History top'))
+    vim.keymap.set('n', 'G', M.history_bottom, opts('History bottom'))
+    vim.keymap.set('n', 'k', M.history_up, opts('History up'))
+    vim.keymap.set('n', 'j', M.history_down, opts('History down'))
+    vim.keymap.set({ 'n', 'i' }, '<up>', M.history_up, opts('History up'))
+    vim.keymap.set({ 'n', 'i' }, '<down>', M.history_down, opts('History down'))
+    vim.keymap.set('n', ':', ':', opts('Backup native cmdline'))
+    vim.keymap.set('n', '<esc>', '<cmd>bdelete!<cr>', opts('Close'))
+    vim.keymap.set('i', '<tab>', 'pumvisible() ? "<c-n>" : "<c-x><c-o>"', opts('Next completion', { expr = true }))
+    vim.keymap.set('i', '<s-tab>', 'pumvisible() ? "<c-p>" : "<s-tab>"', opts('Previous completion', { expr = true }))
 
     vim.fn.prompt_setprompt(buffer, ':')
     vim.fn.prompt_setcallback(buffer, function (command)
         vim.api.nvim_buf_delete(buffer, { force = true })
+        vim.fn.histadd('cmd', command)
         vim.schedule(function () vim.cmd(command) end)
     end)
 
