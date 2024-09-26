@@ -8,68 +8,87 @@ local M = {}
 ---@field on_buffer?   fun(buffer: integer) Invoked on the cmdline buffer.
 ---@field completeopt? string[] Local value for 'completeopt'.
 
+---@class CmdlineState
+---@field omnifunc_lead   string
+---@field working_command string
+---@field history_index   integer
+---@field return_window   integer
+
 ---@type CmdlineOptions
 M.default_options = {}
 
----@type string?
-local omnifunc_lead
+---@type table<integer, CmdlineState>
+M.instances = {}
+
+---@type integer?
+local current_instance_buffer
+
+---@return CmdlineState
+local function current_instance()
+    return M.instances[assert(current_instance_buffer)]
+end
+
+---@return string
+local function current_line()
+    return vim.api.nvim_buf_call(assert(current_instance_buffer), vim.api.nvim_get_current_line)
+end
+
+---@return string
+local function current_prompt()
+    return vim.fn.prompt_getprompt(assert(current_instance_buffer))
+end
 
 ---@type fun(findstart: integer): integer|string[]
 function vim.g.nvim_cmdline_omnifunc(findstart)
+    local instance = current_instance()
     if findstart == 1 then
         local cursor = vim.fn.col('.') - 1
-        local prompt = vim.fn.prompt_getprompt(vim.api.nvim_get_current_buf())
-        omnifunc_lead = vim.api.nvim_get_current_line():sub(#prompt + 1, cursor)
-        return cursor - #omnifunc_lead:match('([a-zA-Z_]*)$')
+        instance.omnifunc_lead = current_line():sub(#current_prompt() + 1, cursor)
+        return cursor - #instance.omnifunc_lead:match('([a-zA-Z_]*)$')
     else
-        return vim.fn.getcompletion(omnifunc_lead, 'cmdline')
+        return vim.fn.getcompletion(instance.omnifunc_lead, 'cmdline')
     end
 end
 
 ---@return string
 function M.get_command()
-    local prompt = vim.fn.prompt_getprompt(vim.api.nvim_get_current_buf())
-    return vim.api.nvim_get_current_line():sub(#prompt + 1)
+    return current_line():sub(#current_prompt() + 1)
 end
 
 ---@param command string
 function M.set_command(command)
-    local prompt = vim.fn.prompt_getprompt(vim.api.nvim_get_current_buf())
-    vim.api.nvim_set_current_line(prompt .. command)
+    vim.api.nvim_buf_call(assert(current_instance_buffer), function ()
+        vim.api.nvim_set_current_line(current_prompt() .. command)
+    end)
 end
-
----@type integer
-local history_index = 0
-
----@type string
-local working_command = ''
 
 ---@param index integer
 local function set_history_index(index)
+    local instance = current_instance()
     local max = vim.fn.histnr('cmd')
-    if history_index == max then
-        working_command = M.get_command()
+    if instance.history_index == max then
+        instance.working_command = M.get_command()
     end
     if index > max then
-        history_index = max
+        instance.history_index = max
     elseif index < 0 then
-        history_index = 0
+        instance.history_index = 0
     else
-        history_index = index
+        instance.history_index = index
     end
-    if history_index == max then
-        M.set_command(working_command)
+    if instance.history_index == max then
+        M.set_command(instance.working_command)
     else
-        M.set_command(vim.fn.histget('cmd', history_index + 1))
+        M.set_command(vim.fn.histget('cmd', instance.history_index + 1))
     end
 end
 
 function M.history_up()
-    set_history_index(history_index - vim.v.count1)
+    set_history_index(current_instance().history_index - vim.v.count1)
 end
 
 function M.history_down()
-    set_history_index(history_index + vim.v.count1)
+    set_history_index(current_instance().history_index + vim.v.count1)
 end
 
 function M.history_top()
@@ -83,8 +102,6 @@ end
 ---@param options? CmdlineOptions
 function M.open(options)
     if not options then options = M.default_options end
-
-    history_index = vim.fn.histnr('cmd')
 
     local buffer = vim.api.nvim_create_buf(false --[[listed]], true --[[scratch]])
     vim.bo[buffer].filetype  = 'vim'
@@ -104,7 +121,7 @@ function M.open(options)
     vim.keymap.set({ 'n', 'i' }, '<up>', M.history_up, opts('History up'))
     vim.keymap.set({ 'n', 'i' }, '<down>', M.history_down, opts('History down'))
     vim.keymap.set('n', ':', ':', opts('Backup native cmdline'))
-    vim.keymap.set('n', '<esc>', '<cmd>bdelete!<cr>', opts('Close'))
+    vim.keymap.set('n', '<esc>', '<cmd>bwipeout!<cr>', opts('Close'))
     vim.keymap.set('i', '<tab>', 'pumvisible() ? "<c-n>" : "<c-x><c-o>"', opts('Next completion', { expr = true }))
     vim.keymap.set('i', '<s-tab>', 'pumvisible() ? "<c-p>" : "<s-tab>"', opts('Previous completion', { expr = true }))
 
@@ -115,19 +132,35 @@ function M.open(options)
         vim.schedule(function () vim.cmd(command) end)
     end)
 
-    if options.completeopt then
-        local previous_completeopt = vim.opt.completeopt
-        vim.api.nvim_create_autocmd('BufEnter', {
-            callback = function () vim.opt.completeopt = options.completeopt end,
+    ---@type fun(event: string, description: string, callback: fun())
+    local function autocmd(event, description, callback)
+        vim.api.nvim_create_autocmd(event, {
+            callback = callback,
             buffer   = buffer,
-            desc     = 'nvim-cmdline: Set local completeopt',
-        })
-        vim.api.nvim_create_autocmd('BufLeave', {
-            callback = function () vim.opt.completeopt = previous_completeopt end,
-            buffer   = buffer,
-            desc     = 'nvim-cmdline: Restore global completeopt',
+            desc     = 'nvim-cmdline: ' .. description,
         })
     end
+
+    local previous_completeopt = vim.opt.completeopt
+    autocmd('BufEnter', 'Set cmdline instance', function ()
+        current_instance_buffer = buffer
+        if options.completeopt then vim.opt.completeopt = options.completeopt end
+    end)
+    autocmd('BufLeave', 'Reset cmdline instance', function ()
+        current_instance_buffer = nil
+        if options.completeopt then vim.opt.completeopt = previous_completeopt end
+    end)
+    autocmd('BufWipeout', 'Clean up cmdline instance', function ()
+        vim.api.nvim_set_current_win(M.instances[buffer].return_window)
+        M.instances[buffer] = nil
+    end)
+
+    M.instances[buffer] = {
+        omnifunc_lead   = '',
+        working_command = '',
+        history_index   = vim.fn.histnr('cmd'),
+        return_window   = vim.api.nvim_get_current_win(),
+    }
 
     local width = options.width or 0.6
     local position = options.position or 0.4
