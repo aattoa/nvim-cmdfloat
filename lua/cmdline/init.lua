@@ -99,6 +99,20 @@ function M.history_bottom()
     set_history_index(vim.fn.histnr('cmd'))
 end
 
+---@type fun(options: CmdlineOptions): vim.api.keyset.win_config
+local function cmdline_window_config(options)
+    local width = options.width or 0.6
+    local position = options.position or 0.4
+    return {
+        relative = 'editor',
+        border   = options.border or 'rounded',
+        row      = math.floor(vim.o.lines * position),
+        col      = math.floor(vim.o.columns * (1 - width) / 2),
+        width    = math.floor(vim.o.columns * width),
+        height   = 1,
+    }
+end
+
 ---@param options? CmdlineOptions
 function M.open(options)
     if not options then options = M.default_options end
@@ -132,6 +146,11 @@ function M.open(options)
         vim.schedule(function () vim.cmd(command) end)
     end)
 
+    local window = vim.api.nvim_open_win(buffer, false --[[enter]], cmdline_window_config(options))
+    vim.wo[window].number = false
+    vim.wo[window].relativenumber = false
+    vim.wo[window].cursorline = false
+
     ---@type fun(event: string, description: string, callback: fun())
     local function autocmd(event, description, callback)
         vim.api.nvim_create_autocmd(event, {
@@ -154,6 +173,9 @@ function M.open(options)
         vim.api.nvim_set_current_win(M.instances[buffer].return_window)
         M.instances[buffer] = nil
     end)
+    autocmd('VimResized', 'Resize cmdline window', function ()
+        vim.api.nvim_win_set_config(window, cmdline_window_config(options))
+    end)
 
     M.instances[buffer] = {
         omnifunc_lead   = '',
@@ -162,19 +184,7 @@ function M.open(options)
         return_window   = vim.api.nvim_get_current_win(),
     }
 
-    local width = options.width or 0.6
-    local position = options.position or 0.4
-    local window = vim.api.nvim_open_win(buffer, true --[[enter]], {
-        relative = 'editor',
-        border   = options.border or 'rounded',
-        row      = math.floor(vim.o.lines * position),
-        col      = math.floor(vim.o.columns * (1 - width) / 2),
-        width    = math.floor(vim.o.columns * width),
-        height   = 1,
-    })
-    vim.wo[window].number = false
-    vim.wo[window].relativenumber = false
-    vim.wo[window].cursorline = false
+    vim.api.nvim_set_current_win(window)
 
     if options.on_buffer then options.on_buffer(buffer) end
     if options.on_window then options.on_window(window) end
