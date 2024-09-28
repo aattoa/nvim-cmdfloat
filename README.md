@@ -1,3 +1,3 @@
-# nvim-cmdline
+# nvim-cmdfloat
 
-A tiny Neovim plugin that provides a better command line.
+A small Neovim plugin that provides a floating command-line window.
