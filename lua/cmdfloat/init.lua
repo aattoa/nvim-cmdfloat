@@ -125,6 +125,19 @@ local function cmdfloat_window_config(options)
     }
 end
 
+---@param command string
+local function execute_command(command)
+    local ok, result = pcall(vim.api.nvim_exec2, command, { output = true })
+    if ok then
+        local lines = vim.split(result.output, '\r\n', { plain = true })
+        local chunks = vim.tbl_map(function (line) return { line } end, lines)
+        vim.api.nvim_echo(chunks, false --[[history]], {})
+    else
+        ---@diagnostic disable-next-line: param-type-mismatch
+        vim.notify(result, vim.log.levels.ERROR)
+    end
+end
+
 ---@param options CmdfloatOptions
 ---@return integer buffer, integer window
 local function create_cmdfloat_buffer_and_window(options)
@@ -143,7 +156,9 @@ local function create_cmdfloat_buffer_and_window(options)
     vim.fn.prompt_setcallback(buffer, function (command)
         vim.api.nvim_buf_delete(buffer, { force = true })
         vim.fn.histadd('cmd', command)
-        vim.schedule(function () vim.cmd(command) end)
+        vim.schedule(function ()
+            execute_command(command)
+        end)
     end)
     return buffer, window
 end
