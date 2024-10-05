@@ -1,12 +1,13 @@
 local M = {}
 
 ---@class CmdfloatOptions
----@field position?    number Between 0.0 and 1.0
----@field width?       number Between 0.0 and 1.0
----@field border?      string Border around the cmdfloat window.
----@field on_window?   fun(window: integer) Invoked on the cmdfloat window.
----@field on_buffer?   fun(buffer: integer) Invoked on the cmdfloat buffer.
----@field completeopt? string[] Local value for 'completeopt'.
+---@field position?      number Between 0.0 and 1.0
+---@field width?         number Between 0.0 and 1.0
+---@field border?        string Border around the cmdfloat window.
+---@field window_config? vim.api.keyset.win_config
+---@field on_window?     fun(window: integer) Invoked on the cmdfloat window.
+---@field on_buffer?     fun(buffer: integer) Invoked on the cmdfloat buffer.
+---@field completeopt?   string[] Local value for 'completeopt'.
 
 ---@type CmdfloatOptions
 M.default_options = {}
@@ -115,14 +116,14 @@ end
 local function cmdfloat_window_config(options)
     local width = options.width or 0.6
     local position = options.position or 0.4
-    return {
+    return vim.tbl_deep_extend('keep', options.window_config or {}, {
         relative = 'editor',
         border   = options.border or 'rounded',
         row      = math.floor(vim.o.lines * position),
         col      = math.floor(vim.o.columns * (1 - width) / 2),
         width    = math.floor(vim.o.columns * width),
         height   = 1,
-    }
+    })
 end
 
 ---@param command string
