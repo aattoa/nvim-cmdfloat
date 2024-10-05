@@ -60,7 +60,9 @@ end
 ---@param command string
 function Cmdfloat:set_command(command)
     vim.api.nvim_buf_call(self.prompt_buffer, function ()
-        vim.api.nvim_set_current_line(self:prompt() .. command)
+        local line = self:prompt() .. command
+        vim.api.nvim_set_current_line(line)
+        vim.fn.cursor({ 0, line:len() })
     end)
 end
 
@@ -128,7 +130,7 @@ end
 
 ---@param command string
 local function execute_command(command)
-    local ok, result = pcall(vim.api.nvim_exec2, command, { output = true })
+    local ok, result = pcall(vim.api.nvim_exec2, ':' .. command, { output = true })
     if ok then
         local lines = vim.split(result.output, '\r\n', { plain = true })
         local chunks = vim.tbl_map(function (line) return { line } end, lines)
@@ -145,7 +147,7 @@ local function create_cmdfloat_buffer_and_window(options)
     local buffer = vim.api.nvim_create_buf(false --[[listed]], true --[[scratch]])
     vim.bo[buffer].filetype  = 'vim'
     vim.bo[buffer].buftype   = 'prompt'
-    vim.bo[buffer].bufhidden = 'delete'
+    vim.bo[buffer].bufhidden = 'wipe'
     vim.bo[buffer].omnifunc  = 'v:lua.vim.g.nvim_cmdfloat_omnifunc'
 
     local window = vim.api.nvim_open_win(buffer, false --[[enter]], cmdfloat_window_config(options))
@@ -164,10 +166,8 @@ local function create_cmdfloat_buffer_and_window(options)
     return buffer, window
 end
 
----@param options? CmdfloatOptions
-function M.open(options)
-    if not options then options = M.default_options end
-
+---@type fun(mode: string, options: CmdfloatOptions)
+local function run(mode, options)
     local buffer, window = create_cmdfloat_buffer_and_window(options)
     M.instances[buffer] = Cmdfloat.new(buffer, vim.api.nvim_get_current_win())
 
@@ -182,7 +182,7 @@ function M.open(options)
     vim.keymap.set({ 'n', 'i' }, '<up>', M.history_up, opts('History up'))
     vim.keymap.set({ 'n', 'i' }, '<down>', M.history_down, opts('History down'))
     vim.keymap.set('n', ':', ':', opts('Backup native command line'))
-    vim.keymap.set('n', '<esc>', '<cmd>bwipeout!<cr>', opts('Close'))
+    vim.keymap.set('n', '<esc>', '<cmd>close!<cr>', opts('Close'))
     vim.keymap.set('i', '<tab>', 'pumvisible() ? "<c-n>" : "<c-x><c-o>"', opts('Next completion', { expr = true }))
     vim.keymap.set('i', '<s-tab>', 'pumvisible() ? "<c-p>" : "<s-tab>"', opts('Previous completion', { expr = true }))
 
@@ -214,8 +214,20 @@ function M.open(options)
     if options.on_buffer then options.on_buffer(buffer) end
     if options.on_window then options.on_window(window) end
 
+    if vim.list_contains({ 'v', 'V', vim.keycode('<c-v>') }, mode) then
+        M.instances[buffer]:set_command('\'<,\'>')
+    end
     vim.api.nvim_set_current_win(window)
-    vim.cmd.startinsert()
+    vim.cmd.startinsert({ bang = true })
+end
+
+---@param options? CmdfloatOptions
+function M.open(options)
+    local mode = vim.fn.mode()
+    vim.api.nvim_feedkeys(vim.keycode('<c-\\><c-n>'), 'n', false)
+    vim.schedule(function ()
+        run(mode, options or M.default_options)
+    end)
 end
 
 return M
